@@ -16,7 +16,7 @@ declare function esc(s: string): string;
 declare function toast(s: string): void;
 
 type Role = "student" | "teacher" | "district_admin";
-type Me = { id: string; role: Role; name: string; lang: "en" | "es"; districtId: string | null; classIds: string[]; isAdmin: boolean };
+type Me = { id: string; role: Role; name: string; lang: "en" | "es"; districtId: string | null; classIds: string[]; studentClassIds: string[]; teacherClassIds: string[]; isAdmin: boolean };
 let me: Me | null = null;
 let ready = false;
 const studentsById: Record<string, { name: string; inst: string; lang: string }> = {};
@@ -82,7 +82,7 @@ w.route = function () {
   if (!ready) block = "loading";
   else if (!me) block = "signin";
   else if (v === "teacher" && me.role === "student") block = "teacherOnly";
-  else if (v === "student" && me.role === "student" && !me.classIds.length) block = "noClass";
+  else if (v === "student" && me.role === "student" && !me.studentClassIds.length) block = "noClass";
   document.querySelectorAll(".view").forEach((s) => s.classList.toggle("on", block ? s === gate : s.id === "v-" + v));
   if (block) gateHTML(block);
 };
@@ -96,17 +96,18 @@ async function loadMe(): Promise<Me | null> {
   const { data: p } = await sb().from("profiles").select("id, role, display_name, language, district_id").eq("id", user.id).single();
   if (!p) return null;
   const role = p.role as Role;
-  let classIds: string[] = [];
-  if (role === "student") {
-    const { data } = await sb().from("class_students").select("class_id, instrument, level").eq("student_id", p.id);
-    classIds = (data ?? []).map((r: any) => r.class_id);
-    if (data?.[0] && INST[data[0].instrument]) S.inst = data[0].instrument;
-  } else {
+  // One account can be a student in some classes and a teacher in others (the owner account is both)
+  const { data: sc } = await sb().from("class_students").select("class_id, instrument, level").eq("student_id", p.id);
+  const studentClassIds = (sc ?? []).map((r: any) => r.class_id);
+  if (sc?.[0] && INST[sc[0].instrument]) S.inst = sc[0].instrument;
+  let teacherClassIds: string[] = [];
+  if (role !== "student") {
     const { data } = await sb().from("class_teachers").select("class_id").eq("teacher_id", p.id);
-    classIds = (data ?? []).map((r: any) => r.class_id);
+    teacherClassIds = (data ?? []).map((r: any) => r.class_id);
   }
   const { data: adm } = await sb().from("district_admins").select("district_id").eq("user_id", p.id);
-  return { id: p.id, role, name: p.display_name, lang: p.language, districtId: p.district_id, classIds, isAdmin: !!adm?.length };
+  const classIds = [...new Set([...teacherClassIds, ...studentClassIds])];
+  return { id: p.id, role, name: p.display_name, lang: p.language, districtId: p.district_id, classIds, studentClassIds, teacherClassIds, isAdmin: !!adm?.length };
 }
 
 async function loadDistrict() {
@@ -150,7 +151,7 @@ async function loadClassMusicAndAssignments() {
   const vid = (asg ?? []).find((a: any) => a.demo_video_path);
   S.demoUrl = vid ? await signedUrl("demo-videos", vid.demo_video_path) : null;
   const song = (asg ?? []).find((a: any) => a.song_ref);
-  if (song && me.role === "student") {
+  if (song && me.studentClassIds.length) {
     if (SONGS[song.song_ref]) S.song = song.song_ref;
     if (song.tempo) S.tempo = song.tempo;
     S._assigned = song.title;
@@ -187,7 +188,7 @@ const FAMILY_ICON: Record<string, string> = { brass: "🎺", reed: "🎷", flute
 let teacherMastery: Record<string, number> = {};
 
 async function loadTeacher() {
-  const ids = me!.classIds;
+  const ids = me!.teacherClassIds;
   ROSTER.length = 0; NUDGE.length = 0; INSIGHTS.length = 0; S.reports = []; S.ptSubs = []; teacherMastery = {};
   for (const k of Object.keys(studentsById)) delete studentsById[k];
   if (!ids.length) { await loadTips([me!.id]); return; }
@@ -284,7 +285,7 @@ async function save(what: string, p: PromiseLike<{ error: any }>) {
   if (error) { console.error(what, error); toast(L("Couldn't save. Check your connection and try again.", "No se pudo guardar. Revisa tu conexión e inténtalo otra vez.")); return false; }
   return true;
 }
-const isStudent = () => !!me && me.role === "student" && me.classIds.length > 0;
+const isStudent = () => !!me && me.studentClassIds.length > 0;
 const isTeacher = () => !!me && me.role !== "student";
 
 // Practice coach: save numbers only (never sound) when a session ends
@@ -300,7 +301,7 @@ w.stopSession = function (...a: any[]) {
 };
 async function saveSession(secs: number, notes: number, good: number, top: string | null) {
   for (let left = secs; left > 0; left -= 900) {
-    await save("practice", sb().from("practice_sessions").insert({ student_id: me!.id, class_id: me!.classIds[0], instrument: S.inst, seconds: Math.min(900, left), notes_played: left === secs ? notes : 0, notes_in_tune: left === secs ? good : 0, top_issue: left === secs ? top : null }));
+    await save("practice", sb().from("practice_sessions").insert({ student_id: me!.id, class_id: me!.studentClassIds[0], instrument: S.inst, seconds: Math.min(900, left), notes_played: left === secs ? notes : 0, notes_in_tune: left === secs ? good : 0, top_issue: left === secs ? top : null }));
   }
   const changed = Object.keys(S.hits).filter((k) => S.hits[k] !== hitsAtStart[+k]);
   if (changed.length) await save("mastery", sb().from("note_mastery").upsert(changed.map((k) => ({ student_id: me!.id, instrument: S.inst, pitch_class: +k, in_tune_hits: S.hits[k] }))));
@@ -320,17 +321,17 @@ document.addEventListener("click", async (e) => {
   // ── student ──
   if (b.id === "rpSend" && isStudent()) {
     const note = (document.getElementById("rpText") as HTMLTextAreaElement).value.trim().slice(0, 200);
-    save("report", sb().from("problem_reports").insert({ class_id: me.classIds[0], student_id: me.id, kind: ["sound", "froze", "feedback", "other", "instrument"][S.rpType] ?? "other", note: note || null, device: w.deviceInfo().slice(0, 80), screen: "coach" }));
+    save("report", sb().from("problem_reports").insert({ class_id: me.studentClassIds[0], student_id: me.id, kind: ["sound", "froze", "feedback", "other", "instrument"][S.rpType] ?? "other", note: note || null, device: w.deviceInfo().slice(0, 80), screen: "coach" }));
   } else if (d.cknot && isStudent()) {
     const item = CHECK[w.ckFam()][S.ck];
-    save("report", sb().from("problem_reports").insert({ class_id: me.classIds[0], student_id: me.id, kind: "instrument", note: String(item.t[S.lang]).slice(0, 200), device: String(INST[S.inst].en).slice(0, 80), screen: "check" }));
+    save("report", sb().from("problem_reports").insert({ class_id: me.studentClassIds[0], student_id: me.id, kind: "instrument", note: String(item.t[S.lang]).slice(0, 200), device: String(INST[S.inst].en).slice(0, 80), screen: "check" }));
   } else if (b.id === "ptSend" && isStudent() && PT.blob) {
     const blob: Blob = PT.blob, ext = /wav/.test(blob.type) ? "wav" : /ogg/.test(blob.type) ? "ogg" : /mp4|aac|m4a/.test(blob.type) ? "m4a" : "webm";
     const secs = Math.max(1, Math.min(180, 180 - PT.left || 1));
-    const path = `${me.classIds[0]}/${me.id}/${Date.now()}.${ext}`;
+    const path = `${me.studentClassIds[0]}/${me.id}/${Date.now()}.${ext}`;
     const up = await sb().storage.from("playing-tests").upload(path, blob, { contentType: blob.type || "audio/webm" });
     if (up.error) { toast(L("Couldn't send the recording. Try again.", "No se pudo enviar la grabación. Inténtalo otra vez.")); return; }
-    save("playing test", sb().from("playing_tests").insert({ student_id: me.id, class_id: me.classIds[0], audio_path: path, seconds: secs, delete_after: new Date().toISOString() }));
+    save("playing test", sb().from("playing_tests").insert({ student_id: me.id, class_id: me.studentClassIds[0], audio_path: path, seconds: secs, delete_after: new Date().toISOString() }));
   } else if (b.id === "timerBtn" && isStudent()) {
     if (!S.timerOn) timerStartSecs = S.secs; // turning on
     else { const s = S.secs - timerStartSecs; if (s > 0) saveSession(s, 0, 0, null); } // turning off
@@ -345,15 +346,15 @@ document.addEventListener("click", async (e) => {
     } else if (d.cheer !== undefined) {
       const n = NUDGE[+d.cheer];
       if (n?.id) save("cheer", sb().from("cheers").insert({ teacher_id: me.id, student_id: n.id, message_key: "miss_you" }));
-    } else if (b.id === "sendBtn" && me.classIds[0]) {
-      save("assignment", sb().from("assignments").insert({ class_id: me.classIds[0], title: w.songLabel(S.song), song_ref: S.song, tempo: S.tempo, created_by: me.id }));
-    } else if (b.id === "attachBtn" && S.pendingUrl && me.classIds[0]) {
+    } else if (b.id === "sendBtn" && me.teacherClassIds[0]) {
+      save("assignment", sb().from("assignments").insert({ class_id: me.teacherClassIds[0], title: w.songLabel(S.song), song_ref: S.song, tempo: S.tempo, created_by: me.id }));
+    } else if (b.id === "attachBtn" && S.pendingUrl && me.teacherClassIds[0]) {
       const blob = await (await fetch(S.pendingUrl)).blob();
       if (blob.size > 50e6) { e.stopPropagation(); toast(L("That video is too big (50 MB max). Try a shorter clip.", "Ese video es muy grande (máx. 50 MB).")); return; }
-      const path = `${me.classIds[0]}/${Date.now()}.${(blob.type.split("/")[1] || "mp4").replace("quicktime", "mov")}`;
+      const path = `${me.teacherClassIds[0]}/${Date.now()}.${(blob.type.split("/")[1] || "mp4").replace("quicktime", "mov")}`;
       const up = await sb().storage.from("demo-videos").upload(path, blob, { contentType: blob.type || "video/mp4" });
       if (up.error) { toast(L("Couldn't upload the video.", "No se pudo subir el video.")); return; }
-      save("video", sb().from("assignments").insert({ class_id: me.classIds[0], title: "Demo video", demo_video_path: path, created_by: me.id }));
+      save("video", sb().from("assignments").insert({ class_id: me.teacherClassIds[0], title: "Demo video", demo_video_path: path, created_by: me.id }));
     } else if (b.id === "dtSave") {
       const text = (document.getElementById("dtText") as HTMLTextAreaElement).value.trim().slice(0, 200), issue = S.dtSel, pending = S.dtPending;
       if (!text) return;
@@ -396,7 +397,7 @@ w.parseMusicXML = function (text: string, fallback: string) { lastXml = text; re
 const origAddSong = w.addClassSong;
 w.addClassSong = function (parsed: any) {
   origAddSong(parsed);
-  if (isTeacher() && me!.classIds[0] && lastXml) save("music", sb().from("class_music").insert({ class_id: me!.classIds[0], title: parsed.title, musicxml: lastXml, rights_confirmed: true, uploaded_by: me!.id }));
+  if (isTeacher() && me!.teacherClassIds[0] && lastXml) save("music", sb().from("class_music").insert({ class_id: me!.teacherClassIds[0], title: parsed.title, musicxml: lastXml, rights_confirmed: true, uploaded_by: me!.id }));
 };
 
 /* ───────────────────────── start ───────────────────────── */
@@ -408,13 +409,14 @@ async function boot() {
     S.lang = (localStorage.getItem("pm_lang") as any) || me.lang || S.lang;
     await loadDistrict();
     await loadClassMusicAndAssignments();
-    if (me.role === "student") await loadStudent(); else await loadTeacher();
-    if (me.role !== "student" && !location.hash.match(/teacher|how|safety|try/)) location.hash = "#teacher";
+    if (me.studentClassIds.length) await loadStudent();
+    if (me.role !== "student") await loadTeacher();
+    if (me.role !== "student" && !location.hash.match(/student|teacher|how|safety|try/)) location.hash = "#teacher";
     if (me.role === "student" && (!location.hash || location.hash === "#home")) location.hash = "#student";
   }
   ready = true;
   w.renderAll(); w.route();
-  if (me?.role === "student") {
+  if (me?.studentClassIds.length) {
     if (S._assigned) toast(L(`Your director assigned: ${S._assigned}`, `Tu director asignó: ${S._assigned}`));
     else if (S._cheer) setTimeout(() => toast({ miss_you: L("Your director misses hearing you! 🎵", "¡Tu director extraña escucharte! 🎵"), great_week: L("Great week! 🎉", "¡Gran semana! 🎉"), keep_going: L("Keep going! 💪", "¡Sigue así! 💪"), proud_of_you: L("Your director is proud of you! ⭐", "¡Tu director está orgulloso de ti! ⭐") }[S._cheer as string] ?? ""), 400);
   }
