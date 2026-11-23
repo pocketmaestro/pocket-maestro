@@ -1,5 +1,7 @@
 # Pocket Maestro
 
+The full app screens live in `index.html` (from the approved concept). `src/bridge.ts` signs people in and connects every screen to the protected database.
+
 A home practice coach for band students, with a teacher dashboard. English and Spanish.
 **Child safety comes first.** If a feature isn't clearly safe and legal for kids, it doesn't go in.
 
