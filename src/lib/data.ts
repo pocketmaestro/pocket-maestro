@@ -22,6 +22,12 @@ export async function signIn(email: string, password: string) {
   const { error } = await supabase!.auth.signInWithPassword({ email, password });
   return { error: error?.message ?? null };
 }
+/** Emails a one-time sign-in link. Only people already added by the school can use it (no open sign-ups). */
+export async function sendLink(email: string) {
+  if (DEMO) return { error: null };
+  const { error } = await supabase!.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: window.location.origin } });
+  return { error: error?.message ?? null };
+}
 export async function signOut() { if (!DEMO) await supabase!.auth.signOut(); }
 
 export async function loadMe(demoRole?: Role): Promise<Me | null> {

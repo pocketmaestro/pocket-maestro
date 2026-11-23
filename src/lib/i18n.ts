@@ -1,7 +1,7 @@
 export type Lang = "en" | "es";
 const T = {
   en: {
-    signIn: "Sign in", email: "Email", password: "Password", signOut: "Sign out", demo: "Demo mode: made-up students only. Connect Supabase to go live.",
+    signIn: "Sign in", sendLink: "Email me a sign-in link", linkSent: "Check your email for a sign-in link.", orPassword: "Or use a password", email: "Email", password: "Password", signOut: "Sign out", demo: "Demo mode: made-up students only. Connect Supabase to go live.",
     hello: "Hi", coach: "Live coach", start: "🎙 Start listening", stop: "■ Stop", left: "left", listening: "Listening",
     soundOnly: "🔒 Listens only. Never records, never saves, never sends.",
     heard: "I heard", inTune: "right in tune!", low: "is a little low.", high: "is a little high.", wobbly: "is wobbling.",
@@ -13,7 +13,7 @@ const T = {
     teacherNote: "You see only students in classes you teach. Never their sound.",
   },
   es: {
-    signIn: "Entrar", email: "Correo", password: "Contraseña", signOut: "Salir", demo: "Modo demo: solo alumnos inventados. Conecta Supabase para usarlo de verdad.",
+    signIn: "Entrar", sendLink: "Envíame un enlace para entrar", linkSent: "Revisa tu correo para el enlace de entrada.", orPassword: "O usa una contraseña", email: "Correo", password: "Contraseña", signOut: "Salir", demo: "Modo demo: solo alumnos inventados. Conecta Supabase para usarlo de verdad.",
     hello: "Hola", coach: "Entrenador en vivo", start: "🎙 Empezar a escuchar", stop: "■ Detener", left: "restantes", listening: "Escuchando",
     soundOnly: "🔒 Solo escucha. Nunca graba, nunca guarda, nunca envía.",
     heard: "Escuché", inTune: "¡perfectamente afinada!", low: "está un poco baja.", high: "está un poco alta.", wobbly: "está temblando.",
